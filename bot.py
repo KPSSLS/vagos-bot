@@ -1,8 +1,11 @@
 import os
 import discord
+import json
 from discord import app_commands
 from discord.ui import Modal, Button, View
 from dotenv import load_dotenv
+from database import Form, get_session
+from datetime import datetime
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -25,6 +28,127 @@ class Client(discord.Client):
 
 client = Client()
 
+class PersistentView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Принять", style=discord.ButtonStyle.green, custom_id="accept")
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Получаем информацию о форме из базы данных
+        session = get_session()
+        form = session.query(Form).filter_by(message_id=interaction.message.id).first()
+        
+        if not form:
+            await interaction.response.send_message("❌ Форма не найдена в базе данных!", ephemeral=True)
+            return
+
+        if form.status != 'pending':
+            await interaction.response.send_message("❌ Эта форма уже обработана!", ephemeral=True)
+            return
+
+        # Обновляем статус формы
+        form.status = 'accepted'
+        session.commit()
+
+        # Получаем соответствующую роль на основе типа формы
+        role = None
+        if form.form_type == 'inactive':
+            role = client.inactive_role
+        elif form.form_type == 'recruitment':
+            role = client.rec_role
+        elif form.form_type == 'crime':
+            role = client.crime_role
+        elif form.form_type == 'captain':
+            role = client.capt_role
+
+        if role:
+            try:
+                # Получаем пользователя
+                user = await client.fetch_user(form.user_id)
+                member = interaction.guild.get_member(user.id)
+                
+                # Выдаем роль
+                await member.add_roles(role)
+                
+                # Обновляем эмбед
+                embed = interaction.message.embeds[0]
+                embed.color = discord.Color.green()
+                embed.description = "✅ Заявка одобрена"
+                embed.add_field(name="Статус", value=f"Одобрено администратором {interaction.user.mention}", inline=False)
+                
+                # Деактивируем кнопки
+                for child in self.children:
+                    child.disabled = True
+                
+                await interaction.message.edit(embed=embed, view=self)
+                await interaction.response.send_message(f"✅ Заявка пользователя была одобрена!", ephemeral=True)
+
+                # Отправляем личное сообщение пользователю
+                try:
+                    dm_embed = discord.Embed(
+                        title="✅ Ваша заявка одобрена!",
+                        description="Вам была выдана соответствующая роль.",
+                        color=discord.Color.green()
+                    )
+                    dm_embed.add_field(name="👤 Одобрено", value=interaction.user.mention, inline=False)
+                    dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
+                    await user.send(embed=dm_embed)
+                except discord.Forbidden:
+                    pass
+
+            except discord.errors.Forbidden:
+                await interaction.response.send_message("❌ Ошибка: Недостаточно прав для выдачи роли!", ephemeral=True)
+        else:
+            await interaction.response.send_message("⚠️ Роль не настроена!", ephemeral=True)
+
+        session.close()
+
+    @discord.ui.button(label="Отказать", style=discord.ButtonStyle.red, custom_id="deny")
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        session = get_session()
+        form = session.query(Form).filter_by(message_id=interaction.message.id).first()
+        
+        if not form:
+            await interaction.response.send_message("❌ Форма не найдена в базе данных!", ephemeral=True)
+            return
+
+        if form.status != 'pending':
+            await interaction.response.send_message("❌ Эта форма уже обработана!", ephemeral=True)
+            return
+
+        # Обновляем статус формы
+        form.status = 'rejected'
+        session.commit()
+
+        # Обновляем эмбед
+        embed = interaction.message.embeds[0]
+        embed.color = discord.Color.red()
+        embed.description = "❌ Заявка отклонена"
+        embed.add_field(name="Статус", value=f"Отклонено администратором {interaction.user.mention}", inline=False)
+
+        # Деактивируем кнопки
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.message.edit(embed=embed, view=self)
+        await interaction.response.send_message(f"❌ Заявка была отклонена!", ephemeral=True)
+
+        # Отправляем личное сообщение пользователю
+        try:
+            user = await client.fetch_user(form.user_id)
+            dm_embed = discord.Embed(
+                title="❌ Ваша заявка отклонена",
+                description="К сожалению, ваша заявка была отклонена администрацией.",
+                color=discord.Color.red()
+            )
+            dm_embed.add_field(name="👤 Отклонено", value=interaction.user.mention, inline=False)
+            dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
+            await user.send(embed=dm_embed)
+        except discord.Forbidden:
+            pass
+
+        session.close()
+
 # Модальное окно для формы
 class InactiveModal(Modal, title="Форма неактивности"):
     reason = discord.ui.TextInput(
@@ -41,10 +165,6 @@ class InactiveModal(Modal, title="Форма неактивности"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Создаем кнопки
-        accept_button = Button(label="Принять", style=discord.ButtonStyle.green, custom_id="accept")
-        deny_button = Button(label="Отказать", style=discord.ButtonStyle.red, custom_id="deny")
-        
         embed = discord.Embed(
             title="📝 Заявка на неактивность",
             description="Ожидает рассмотрения...",
@@ -54,86 +174,28 @@ class InactiveModal(Modal, title="Форма неактивности"):
         embed.add_field(name="⏰ Длительность", value=self.duration.value, inline=True)
         embed.add_field(name="📋 Причина", value=self.reason.value, inline=False)
         embed.set_footer(text=f"ID пользователя: {interaction.user.id}")
-        
-        async def accept_callback(button_interaction: discord.Interaction):
-            if client.inactive_role:
-                try:
-                    # Деактивируем кнопки
-                    accept_button.disabled = True
-                    deny_button.disabled = True
-                    
-                    # Обновляем эмбед
-                    embed.color = discord.Color.green()
-                    embed.description = "✅ Заявка одобрена"
-                    embed.add_field(name="Статус", value="Одобрено администратором " + button_interaction.user.mention, inline=False)
-                    
-                    # Обновляем сообщение
-                    await button_interaction.message.edit(embed=embed, view=view)
-                    
-                    # Выдаем роль
-                    await interaction.user.add_roles(client.inactive_role)
-                    await button_interaction.response.send_message(f"✅ Заявка {interaction.user.mention} была одобрена!", ephemeral=True)
 
-                    # Отправляем личное сообщение пользователю
-                    dm_embed = discord.Embed(
-                        title="✅ Ваша заявка на неактивность одобрена!",
-                        description="Вам была выдана соответствующая роль.",
-                        color=discord.Color.green()
-                    )
-                    dm_embed.add_field(name="⏰ Длительность", value=self.duration.value, inline=True)
-                    dm_embed.add_field(name="📋 Причина", value=self.reason.value, inline=True)
-                    dm_embed.add_field(name="👤 Одобрено", value=button_interaction.user.mention, inline=False)
-                    dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
-                    
-                    try:
-                        await interaction.user.send(embed=dm_embed)
-                    except discord.Forbidden:
-                        await button_interaction.followup.send(f"⚠️ Не удалось отправить личное сообщение пользователю {interaction.user.mention}", ephemeral=True)
-
-                except discord.errors.Forbidden:
-                    await button_interaction.response.send_message("❌ Ошибка: Недостаточно прав для выдачи роли!", ephemeral=True)
-            else:
-                await button_interaction.response.send_message("⚠️ Роль не настроена!", ephemeral=True)
-
-        async def deny_callback(button_interaction: discord.Interaction):
-            # Деактивируем кнопки
-            accept_button.disabled = True
-            deny_button.disabled = True
-            
-            # Обновляем эмбед
-            embed.color = discord.Color.red()
-            embed.description = "❌ Заявка отклонена"
-            embed.add_field(name="Статус", value="Отклонено администратором " + button_interaction.user.mention, inline=False)
-            
-            # Обновляем сообщение
-            await button_interaction.message.edit(embed=embed, view=view)
-            await button_interaction.response.send_message(f"❌ Заявка {interaction.user.mention} была отклонена!", ephemeral=True)
-
-            # Отправляем личное сообщение пользователю
-            dm_embed = discord.Embed(
-                title="❌ Ваша заявка на неактивность отклонена",
-                description="К сожалению, ваша заявка была отклонена администрацией.",
-                color=discord.Color.red()
-            )
-            dm_embed.add_field(name="⏰ Длительность", value=self.duration.value, inline=True)
-            dm_embed.add_field(name="📋 Причина", value=self.reason.value, inline=True)
-            dm_embed.add_field(name="👤 Отклонено", value=button_interaction.user.mention, inline=False)
-            dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
-            
-            try:
-                await interaction.user.send(embed=dm_embed)
-            except discord.Forbidden:
-                await button_interaction.followup.send(f"⚠️ Не удалось отправить личное сообщение пользователю {interaction.user.mention}", ephemeral=True)
-
-        accept_button.callback = accept_callback
-        deny_button.callback = deny_callback
-
-        view = View()
-        view.add_item(accept_button)
-        view.add_item(deny_button)
+        view = PersistentView()
 
         if client.inactive_channel:
-            await client.inactive_channel.send(embed=embed, view=view)
+            message = await client.inactive_channel.send(embed=embed, view=view)
+            
+            # Сохраняем информацию о форме в базе данных
+            session = get_session()
+            form = Form(
+                message_id=message.id,
+                channel_id=client.inactive_channel.id,
+                user_id=interaction.user.id,
+                form_type='inactive',
+                content=json.dumps({
+                    'reason': self.reason.value,
+                    'duration': self.duration.value
+                })
+            )
+            session.add(form)
+            session.commit()
+            session.close()
+
             await interaction.response.send_message("✅ Ваша заявка отправлена!", ephemeral=True)
         else:
             await interaction.response.send_message("❌ Канал для заявок не настроен!", ephemeral=True)
@@ -175,10 +237,6 @@ class RecruitmentModal(Modal, title="Форма для вступления в R
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Создаем кнопки
-        accept_button = Button(label="Принять", style=discord.ButtonStyle.green, custom_id="accept_rec")
-        deny_button = Button(label="Отказать", style=discord.ButtonStyle.red, custom_id="deny_rec")
-        
         embed = discord.Embed(
             title="📝 Заявка на вступление в Recruitment",
             description="Ожидает рассмотрения...",
@@ -191,82 +249,31 @@ class RecruitmentModal(Modal, title="Форма для вступления в R
         embed.add_field(name="📚 Опыт работы", value=self.experience.value, inline=False)
         embed.add_field(name="⏰ Онлайн", value=self.online.value, inline=False)
         embed.set_footer(text=f"ID пользователя: {interaction.user.id}")
-        
-        async def accept_callback(button_interaction: discord.Interaction):
-            if client.rec_role:
-                try:
-                    # Деактивируем кнопки
-                    accept_button.disabled = True
-                    deny_button.disabled = True
-                    
-                    # Обновляем эмбед
-                    embed.color = discord.Color.green()
-                    embed.description = "✅ Заявка одобрена"
-                    embed.add_field(name="Статус", value="Одобрено администратором " + button_interaction.user.mention, inline=False)
-                    
-                    # Обновляем сообщение
-                    await button_interaction.message.edit(embed=embed, view=view)
-                    
-                    # Выдаем роль
-                    await interaction.user.add_roles(client.rec_role)
-                    await button_interaction.response.send_message(f"✅ Заявка {interaction.user.mention} была одобрена!", ephemeral=True)
 
-                    # Отправляем личное сообщение пользователю
-                    dm_embed = discord.Embed(
-                        title="✅ Поздравляем! Вы приняты в отдел Recruitment!",
-                        description="Вам была выдана соответствующая роль.",
-                        color=discord.Color.green()
-                    )
-                    dm_embed.add_field(name="👤 Одобрено", value=button_interaction.user.mention, inline=False)
-                    dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
-                    
-                    try:
-                        await interaction.user.send(embed=dm_embed)
-                    except discord.Forbidden:
-                        await button_interaction.followup.send(f"⚠️ Не удалось отправить личное сообщение пользователю {interaction.user.mention}", ephemeral=True)
-
-                except discord.errors.Forbidden:
-                    await button_interaction.response.send_message("❌ Ошибка: Недостаточно прав для выдачи роли!", ephemeral=True)
-            else:
-                await button_interaction.response.send_message("⚠️ Роль не настроена!", ephemeral=True)
-
-        async def deny_callback(button_interaction: discord.Interaction):
-            # Деактивируем кнопки
-            accept_button.disabled = True
-            deny_button.disabled = True
-            
-            # Обновляем эмбед
-            embed.color = discord.Color.red()
-            embed.description = "❌ Заявка отклонена"
-            embed.add_field(name="Статус", value="Отклонено администратором " + button_interaction.user.mention, inline=False)
-            
-            # Обновляем сообщение
-            await button_interaction.message.edit(embed=embed, view=view)
-            await button_interaction.response.send_message(f"❌ Заявка {interaction.user.mention} была отклонена!", ephemeral=True)
-
-            # Отправляем личное сообщение пользователю
-            dm_embed = discord.Embed(
-                title="❌ Ваша заявка в Recruitment отклонена",
-                description="К сожалению, ваша заявка была отклонена.",
-                color=discord.Color.red()
-            )
-            dm_embed.add_field(name="👤 Отклонено", value=button_interaction.user.mention, inline=False)
-            dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
-            
-            try:
-                await interaction.user.send(embed=dm_embed)
-            except discord.Forbidden:
-                await button_interaction.followup.send(f"⚠️ Не удалось отправить личное сообщение пользователю {interaction.user.mention}", ephemeral=True)
-
-        accept_button.callback = accept_callback
-        deny_button.callback = deny_callback
-
-        view = View()
-        view.add_item(accept_button)
-        view.add_item(deny_button)
+        view = PersistentView()
 
         if client.rec_channel:
-            await client.rec_channel.send(embed=embed, view=view)
+            message = await client.rec_channel.send(embed=embed, view=view)
+            
+            # Сохраняем информацию о форме в базе данных
+            session = get_session()
+            form = Form(
+                message_id=message.id,
+                channel_id=client.rec_channel.id,
+                user_id=interaction.user.id,
+                form_type='recruitment',
+                content=json.dumps({
+                    'nickname': self.nickname.value,
+                    'age': self.age.value,
+                    'reason': self.reason.value,
+                    'experience': self.experience.value,
+                    'online': self.online.value
+                })
+            )
+            session.add(form)
+            session.commit()
+            session.close()
+
             await interaction.response.send_message("✅ Ваша заявка отправлена!", ephemeral=True)
         else:
             await interaction.response.send_message("❌ Канал для заявок не настроен!", ephemeral=True)
@@ -308,10 +315,6 @@ class CrimeModal(Modal, title="Форма для вступления в Crime")
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Создаем кнопки
-        accept_button = Button(label="Принять", style=discord.ButtonStyle.green, custom_id="accept_crime")
-        deny_button = Button(label="Отказать", style=discord.ButtonStyle.red, custom_id="deny_crime")
-        
         embed = discord.Embed(
             title="📝 Заявка на вступление в Crime",
             description="Ожидает рассмотрения...",
@@ -324,82 +327,31 @@ class CrimeModal(Modal, title="Форма для вступления в Crime")
         embed.add_field(name="📚 Опыт работы", value=self.experience.value, inline=False)
         embed.add_field(name="⏰ Онлайн", value=self.online.value, inline=False)
         embed.set_footer(text=f"ID пользователя: {interaction.user.id}")
-        
-        async def accept_callback(button_interaction: discord.Interaction):
-            if client.crime_role:
-                try:
-                    # Деактивируем кнопки
-                    accept_button.disabled = True
-                    deny_button.disabled = True
-                    
-                    # Обновляем эмбед
-                    embed.color = discord.Color.green()
-                    embed.description = "✅ Заявка одобрена"
-                    embed.add_field(name="Статус", value="Одобрено администратором " + button_interaction.user.mention, inline=False)
-                    
-                    # Обновляем сообщение
-                    await button_interaction.message.edit(embed=embed, view=view)
-                    
-                    # Выдаем роль
-                    await interaction.user.add_roles(client.crime_role)
-                    await button_interaction.response.send_message(f"✅ Заявка {interaction.user.mention} была одобрена!", ephemeral=True)
 
-                    # Отправляем личное сообщение пользователю
-                    dm_embed = discord.Embed(
-                        title="✅ Поздравляем! Вы приняты в отдел Crime!",
-                        description="Вам была выдана соответствующая роль.",
-                        color=discord.Color.green()
-                    )
-                    dm_embed.add_field(name="👤 Одобрено", value=button_interaction.user.mention, inline=False)
-                    dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
-                    
-                    try:
-                        await interaction.user.send(embed=dm_embed)
-                    except discord.Forbidden:
-                        await button_interaction.followup.send(f"⚠️ Не удалось отправить личное сообщение пользователю {interaction.user.mention}", ephemeral=True)
-
-                except discord.errors.Forbidden:
-                    await button_interaction.response.send_message("❌ Ошибка: Недостаточно прав для выдачи роли!", ephemeral=True)
-            else:
-                await button_interaction.response.send_message("⚠️ Роль не настроена!", ephemeral=True)
-
-        async def deny_callback(button_interaction: discord.Interaction):
-            # Деактивируем кнопки
-            accept_button.disabled = True
-            deny_button.disabled = True
-            
-            # Обновляем эмбед
-            embed.color = discord.Color.red()
-            embed.description = "❌ Заявка отклонена"
-            embed.add_field(name="Статус", value="Отклонено администратором " + button_interaction.user.mention, inline=False)
-            
-            # Обновляем сообщение
-            await button_interaction.message.edit(embed=embed, view=view)
-            await button_interaction.response.send_message(f"❌ Заявка {interaction.user.mention} была отклонена!", ephemeral=True)
-
-            # Отправляем личное сообщение пользователю
-            dm_embed = discord.Embed(
-                title="❌ Ваша заявка в Crime отклонена",
-                description="К сожалению, ваша заявка была отклонена.",
-                color=discord.Color.red()
-            )
-            dm_embed.add_field(name="👤 Отклонено", value=button_interaction.user.mention, inline=False)
-            dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
-            
-            try:
-                await interaction.user.send(embed=dm_embed)
-            except discord.Forbidden:
-                await button_interaction.followup.send(f"⚠️ Не удалось отправить личное сообщение пользователю {interaction.user.mention}", ephemeral=True)
-
-        accept_button.callback = accept_callback
-        deny_button.callback = deny_callback
-
-        view = View()
-        view.add_item(accept_button)
-        view.add_item(deny_button)
+        view = PersistentView()
 
         if client.crime_channel:
-            await client.crime_channel.send(embed=embed, view=view)
+            message = await client.crime_channel.send(embed=embed, view=view)
+            
+            # Сохраняем информацию о форме в базе данных
+            session = get_session()
+            form = Form(
+                message_id=message.id,
+                channel_id=client.crime_channel.id,
+                user_id=interaction.user.id,
+                form_type='crime',
+                content=json.dumps({
+                    'nickname': self.nickname.value,
+                    'age': self.age.value,
+                    'reason': self.reason.value,
+                    'experience': self.experience.value,
+                    'online': self.online.value
+                })
+            )
+            session.add(form)
+            session.commit()
+            session.close()
+
             await interaction.response.send_message("✅ Ваша заявка отправлена!", ephemeral=True)
         else:
             await interaction.response.send_message("❌ Канал для заявок не настроен!", ephemeral=True)
@@ -441,10 +393,6 @@ class CaptainModal(Modal, title="Форма для вступления в Capta
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Создаем кнопки
-        accept_button = Button(label="Принять", style=discord.ButtonStyle.green, custom_id="accept_capt")
-        deny_button = Button(label="Отказать", style=discord.ButtonStyle.red, custom_id="deny_capt")
-        
         embed = discord.Embed(
             title="📝 Заявка на вступление в Captain",
             description="Ожидает рассмотрения...",
@@ -457,82 +405,31 @@ class CaptainModal(Modal, title="Форма для вступления в Capta
         embed.add_field(name="📚 Опыт работы", value=self.experience.value, inline=False)
         embed.add_field(name="⏰ Онлайн", value=self.online.value, inline=False)
         embed.set_footer(text=f"ID пользователя: {interaction.user.id}")
-        
-        async def accept_callback(button_interaction: discord.Interaction):
-            if client.capt_role:
-                try:
-                    # Деактивируем кнопки
-                    accept_button.disabled = True
-                    deny_button.disabled = True
-                    
-                    # Обновляем эмбед
-                    embed.color = discord.Color.green()
-                    embed.description = "✅ Заявка одобрена"
-                    embed.add_field(name="Статус", value="Одобрено администратором " + button_interaction.user.mention, inline=False)
-                    
-                    # Обновляем сообщение
-                    await button_interaction.message.edit(embed=embed, view=view)
-                    
-                    # Выдаем роль
-                    await interaction.user.add_roles(client.capt_role)
-                    await button_interaction.response.send_message(f"✅ Заявка {interaction.user.mention} была одобрена!", ephemeral=True)
 
-                    # Отправляем личное сообщение пользователю
-                    dm_embed = discord.Embed(
-                        title="✅ Поздравляем! Вы приняты в отдел Captain!",
-                        description="Вам была выдана соответствующая роль.",
-                        color=discord.Color.green()
-                    )
-                    dm_embed.add_field(name="👤 Одобрено", value=button_interaction.user.mention, inline=False)
-                    dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
-                    
-                    try:
-                        await interaction.user.send(embed=dm_embed)
-                    except discord.Forbidden:
-                        await button_interaction.followup.send(f"⚠️ Не удалось отправить личное сообщение пользователю {interaction.user.mention}", ephemeral=True)
-
-                except discord.errors.Forbidden:
-                    await button_interaction.response.send_message("❌ Ошибка: Недостаточно прав для выдачи роли!", ephemeral=True)
-            else:
-                await button_interaction.response.send_message("⚠️ Роль не настроена!", ephemeral=True)
-
-        async def deny_callback(button_interaction: discord.Interaction):
-            # Деактивируем кнопки
-            accept_button.disabled = True
-            deny_button.disabled = True
-            
-            # Обновляем эмбед
-            embed.color = discord.Color.red()
-            embed.description = "❌ Заявка отклонена"
-            embed.add_field(name="Статус", value="Отклонено администратором " + button_interaction.user.mention, inline=False)
-            
-            # Обновляем сообщение
-            await button_interaction.message.edit(embed=embed, view=view)
-            await button_interaction.response.send_message(f"❌ Заявка {interaction.user.mention} была отклонена!", ephemeral=True)
-
-            # Отправляем личное сообщение пользователю
-            dm_embed = discord.Embed(
-                title="❌ Ваша заявка в Captain отклонена",
-                description="К сожалению, ваша заявка была отклонена.",
-                color=discord.Color.red()
-            )
-            dm_embed.add_field(name="👤 Отклонено", value=button_interaction.user.mention, inline=False)
-            dm_embed.set_footer(text=f"Дата: {discord.utils.format_dt(discord.utils.utcnow(), 'F')}")
-            
-            try:
-                await interaction.user.send(embed=dm_embed)
-            except discord.Forbidden:
-                await button_interaction.followup.send(f"⚠️ Не удалось отправить личное сообщение пользователю {interaction.user.mention}", ephemeral=True)
-
-        accept_button.callback = accept_callback
-        deny_button.callback = deny_callback
-
-        view = View()
-        view.add_item(accept_button)
-        view.add_item(deny_button)
+        view = PersistentView()
 
         if client.capt_channel:
-            await client.capt_channel.send(embed=embed, view=view)
+            message = await client.capt_channel.send(embed=embed, view=view)
+            
+            # Сохраняем информацию о форме в базе данных
+            session = get_session()
+            form = Form(
+                message_id=message.id,
+                channel_id=client.capt_channel.id,
+                user_id=interaction.user.id,
+                form_type='captain',
+                content=json.dumps({
+                    'nickname': self.nickname.value,
+                    'age': self.age.value,
+                    'reason': self.reason.value,
+                    'experience': self.experience.value,
+                    'online': self.online.value
+                })
+            )
+            session.add(form)
+            session.commit()
+            session.close()
+
             await interaction.response.send_message("✅ Ваша заявка отправлена!", ephemeral=True)
         else:
             await interaction.response.send_message("❌ Канал для заявок не настроен!", ephemeral=True)
@@ -565,14 +462,6 @@ class MPModal(Modal, title="Создание МП"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Создаем кнопки
-        join_button = Button(label="Присоединиться", style=discord.ButtonStyle.green, custom_id="join_mp")
-        leave_button = Button(label="Покинуть", style=discord.ButtonStyle.red, custom_id="leave_mp")
-        win_button = Button(label="Победа", style=discord.ButtonStyle.green, custom_id="win_mp")
-        lose_button = Button(label="Проигрыш", style=discord.ButtonStyle.red, custom_id="lose_mp")
-        
-        participants = []  # Список участников
-
         embed = discord.Embed(
             title="⚔️ Создание МП",
             description="",
@@ -585,7 +474,16 @@ class MPModal(Modal, title="Создание МП"):
         embed.add_field(name="📋 Требования", value=self.requirements.value, inline=False)
         embed.add_field(name="✅ Записались", value="Пока никто не записался", inline=False)
         embed.set_footer(text=f"ID: {interaction.user.id}")
-        
+
+        view = View()
+
+        join_button = Button(label="Присоединиться", style=discord.ButtonStyle.green, custom_id="join_mp")
+        leave_button = Button(label="Покинуть", style=discord.ButtonStyle.red, custom_id="leave_mp")
+        win_button = Button(label="Победа", style=discord.ButtonStyle.green, custom_id="win_mp")
+        lose_button = Button(label="Проигрыш", style=discord.ButtonStyle.red, custom_id="lose_mp")
+
+        participants = []  # Список участников
+
         async def join_callback(button_interaction: discord.Interaction):
             if button_interaction.user.id not in participants:
                 participants.append(button_interaction.user.id)
@@ -647,7 +545,6 @@ class MPModal(Modal, title="Создание МП"):
         win_button.callback = win_callback
         lose_button.callback = lose_callback
 
-        view = View()
         view.add_item(join_button)
         view.add_item(leave_button)
         view.add_item(win_button)
@@ -927,7 +824,14 @@ async def sync(interaction: discord.Interaction):
 
 @client.event
 async def on_ready():
-    await client.tree.sync()
-    print(f"{client.user} готов к работе!")
+    print(f'Бот {client.user} успешно запущен!')
+    # Регистрируем постоянные обработчики кнопок при запуске
+    client.add_view(PersistentView())
+    # Синхронизируем команды
+    try:
+        synced = await client.tree.sync()
+        print(f"Синхронизировано {len(synced)} команд")
+    except Exception as e:
+        print(f"Ошибка при синхронизации команд: {e}")
 
 client.run(os.getenv('DISCORD_TOKEN'))

@@ -4,3 +4,5 @@ services:
     image: $REGISTRY_URL/$REGISTRY_USERNAME/$APP_NAME:latest
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
+    volumes:
+      - ./forms.db:/app/forms.db  
