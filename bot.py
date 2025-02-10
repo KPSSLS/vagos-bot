@@ -804,7 +804,7 @@ async def captform(interaction: discord.Interaction):
     await interaction.response.send_message("✅ Сообщение с кнопкой создано!", ephemeral=True)
 
 # Команда для создания МП
-@client.tree.command(name="capt", description="Собрать на капт")
+@client.tree.command(name="mp", description="Собрать на капт")
 async def mp(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ У вас нет прав для использования этой команды!", ephemeral=True)
