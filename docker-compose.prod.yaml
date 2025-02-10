@@ -3,4 +3,4 @@ services:
     restart: always
     image: $REGISTRY_URL/$REGISTRY_USERNAME/$APP_NAME:latest
     environment:
-      TOKEN: ${TOKEN}
+      DISCORD_TOKEN: ${DISCORD_TOKEN}

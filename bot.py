@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 
 # Загрузка переменных окружения
 load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
 
 # Основные настройки бота
 class Client(discord.Client):
@@ -931,4 +930,4 @@ async def on_ready():
     await client.tree.sync()
     print(f"{client.user} готов к работе!")
 
-client.run(TOKEN)
+client.run(os.getenv('DISCORD_TOKEN'))

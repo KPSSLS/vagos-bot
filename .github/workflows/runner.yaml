@@ -109,7 +109,7 @@ jobs:
           cd ${{ env.MOUNT_DIR }}/${{ env.REPO_NAME_LOWER }}
 
           cat << EOF > .env
-          TOKEN=${{ env.TOKEN }}
+          DISCORD_TOKEN=${{ env.DISCORD_TOKEN }}
           EOF
 
       - name: Run services with latest version
