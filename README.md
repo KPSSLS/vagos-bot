@@ -47,6 +47,7 @@
 2. Установите зависимости: `pip install -r requirements.txt`
 3. Создайте файл `.env` и добавьте токен бота:
 ```
+TOKEN = os.getenv('DISCORD_TOKEN') в bot.py впишите сюда ваш токен бота
 TOKEN=ваш_токен_бота
 ```
 4. Запустите бота: `python bot.py`
