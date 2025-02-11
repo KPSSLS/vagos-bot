@@ -580,6 +580,7 @@ async def inactive(interaction: discord.Interaction):
         await interaction.response.send_modal(InactiveModal())
 
     button.callback = button_callback
+    view = View()
     view.timeout = None
     view.add_item(button)
 
@@ -600,6 +601,7 @@ async def recform(interaction: discord.Interaction):
         await button_interaction.response.send_modal(RecruitmentModal())
 
     button.callback = button_callback
+    view = View()
     view.timeout = None
     view.add_item(button)
 
@@ -638,6 +640,7 @@ async def crimeform(interaction: discord.Interaction):
         await button_interaction.response.send_modal(CrimeModal())
 
     button.callback = button_callback
+    view = View()
     view.timeout = None
     view.add_item(button)
 
@@ -676,6 +679,7 @@ async def captform(interaction: discord.Interaction):
         await button_interaction.response.send_modal(CaptainModal())
 
     button.callback = button_callback
+    view = View()
     view.timeout = None
     view.add_item(button)
 
