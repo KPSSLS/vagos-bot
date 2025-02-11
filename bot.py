@@ -594,7 +594,7 @@ async def recform(interaction: discord.Interaction):
         return
 
     # Создаем кнопку
-    button = Button(label="Подать заявку в Recruitment", style=discord.ButtonStyle.primary custom_id="rec_apply_btn")
+    button = Button(label="Подать заявку в Recruitment", style=discord.ButtonStyle.primary, custom_id="rec_apply_btn")
     
     async def button_callback(button_interaction: discord.Interaction):
         await button_interaction.response.send_modal(RecruitmentModal())
