@@ -574,13 +574,13 @@ async def inactive(interaction: discord.Interaction):
         await interaction.response.send_message("У вас нет прав для использования этой команды!", ephemeral=True)
         return
 
-    button = Button(label="Подать заявку на неактивность", style=discord.ButtonStyle.primary)
+    button = Button(label="Подать заявку на неактивность", style=discord.ButtonStyle.primary, custom_id="in_active_btn")
     
     async def button_callback(interaction: discord.Interaction):
         await interaction.response.send_modal(InactiveModal())
 
     button.callback = button_callback
-    view = View()
+    view.timeout = None
     view.add_item(button)
 
     await interaction.channel.send("Нажмите на кнопку, чтобы подать заявку на неактивность:", view=view)
@@ -594,13 +594,13 @@ async def recform(interaction: discord.Interaction):
         return
 
     # Создаем кнопку
-    button = Button(label="Подать заявку в Recruitment", style=discord.ButtonStyle.primary)
+    button = Button(label="Подать заявку в Recruitment", style=discord.ButtonStyle.primary custom_id="rec_apply_btn")
     
     async def button_callback(button_interaction: discord.Interaction):
         await button_interaction.response.send_modal(RecruitmentModal())
 
     button.callback = button_callback
-    view = View()
+    view.timeout = None
     view.add_item(button)
 
     # Создаем красивый эмбед
@@ -632,13 +632,13 @@ async def crimeform(interaction: discord.Interaction):
         return
 
     # Создаем кнопку
-    button = Button(label="Подать заявку в Crime", style=discord.ButtonStyle.primary)
+    button = Button(label="Подать заявку в Crime", style=discord.ButtonStyle.primary, custom_id="crime_send_btn")
     
     async def button_callback(button_interaction: discord.Interaction):
         await button_interaction.response.send_modal(CrimeModal())
 
     button.callback = button_callback
-    view = View()
+    view.timeout = None
     view.add_item(button)
 
     # Создаем красивый эмбед
@@ -670,13 +670,13 @@ async def captform(interaction: discord.Interaction):
         return
 
     # Создаем кнопку
-    button = Button(label="Подать заявку в Captain", style=discord.ButtonStyle.primary)
+    button = Button(label="Подать заявку в Captain", style=discord.ButtonStyle.primary, custom_id="cpt_send_btn")
     
     async def button_callback(button_interaction: discord.Interaction):
         await button_interaction.response.send_modal(CaptainModal())
 
     button.callback = button_callback
-    view = View()
+    view.timeout = None
     view.add_item(button)
 
     # Создаем красивый эмбед
