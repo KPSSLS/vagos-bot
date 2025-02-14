@@ -467,20 +467,33 @@ class OtchetModal(Modal, title="Форма отчета"):
     async def on_submit(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="📝 Отчет о мероприятии",
-            description="Ожидает рассмотрения...",
             color=discord.Color.blue()
         )
         embed.add_field(name="👤 Организатор", value=interaction.user.mention, inline=True)
-        embed.add_field(name="🔄 Ссылка на откат", value=self.rollback_link.value, inline=True)
         embed.add_field(name="📅 Мероприятие", value=self.event_type.value, inline=True)
         embed.add_field(name="⏰ Время и дата", value=self.date_time.value, inline=True)
         embed.add_field(name="📊 Результат", value=self.result.value, inline=False)
+        
+        # Проверяем, является ли ссылка ссылкой на видео или изображение
+        video_extensions = ['.mp4', '.mov', '.avi', '.webm']
+        image_extensions = ['.jpg', '.jpeg', '.png', '.gif']
+        
+        link = self.rollback_link.value.lower()
+        is_video = any(ext in link for ext in video_extensions)
+        is_image = any(ext in link for ext in image_extensions)
+        
+        if is_video:
+            embed.add_field(name="🎥 Видеозапись", value=self.rollback_link.value, inline=False)
+            embed.video.url = self.rollback_link.value
+        elif is_image:
+            embed.set_image(url=self.rollback_link.value)
+        else:
+            embed.add_field(name="🔄 Ссылка на откат", value=self.rollback_link.value, inline=False)
+            
         embed.set_footer(text=f"ID пользователя: {interaction.user.id}")
 
-        view = PersistentView()
-
         if client.otchet_channel:
-            message = await client.otchet_channel.send(embed=embed, view=view)
+            message = await client.otchet_channel.send(embed=embed)
             
             # Сохраняем информацию о форме в базе данных
             session = get_session()
