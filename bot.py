@@ -60,6 +60,8 @@ class PersistentView(View):
             role = client.crime_role
         elif form.form_type == 'captain':
             role = client.capt_role
+        elif form.form_type == 'otchet':
+            role = client.capt_role
 
         if role:
             try:
@@ -434,6 +436,73 @@ class CaptainModal(Modal, title="Форма для вступления в Capta
         else:
             await interaction.response.send_message("❌ Канал для заявок не настроен!", ephemeral=True)
 
+# Модальное окно для формы отчета
+class OtchetModal(Modal, title="Форма отчета"):
+    rollback_link = discord.ui.TextInput(
+        label="Ссылка на откат",
+        placeholder="Укажите ссылку на откат",
+        required=True
+    )
+    
+    event_type = discord.ui.TextInput(
+        label="Какое мероприятие",
+        placeholder="Укажите тип мероприятия",
+        required=True
+    )
+
+    date_time = discord.ui.TextInput(
+        label="Время и дата",
+        placeholder="Укажите время и дату проведения",
+        required=True
+    )
+
+    result = discord.ui.TextInput(
+        label="Результат",
+        style=discord.TextStyle.paragraph,
+        placeholder="Укажите результат мероприятия",
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="📝 Отчет о мероприятии",
+            description="Ожидает рассмотрения...",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="👤 Организатор", value=interaction.user.mention, inline=True)
+        embed.add_field(name="🔄 Ссылка на откат", value=self.rollback_link.value, inline=True)
+        embed.add_field(name="📅 Мероприятие", value=self.event_type.value, inline=True)
+        embed.add_field(name="⏰ Время и дата", value=self.date_time.value, inline=True)
+        embed.add_field(name="📊 Результат", value=self.result.value, inline=False)
+        embed.set_footer(text=f"ID пользователя: {interaction.user.id}")
+
+        view = PersistentView()
+
+        if client.capt_channel:
+            message = await client.capt_channel.send(embed=embed, view=view)
+            
+            # Сохраняем информацию о форме в базе данных
+            session = get_session()
+            form = Form(
+                message_id=message.id,
+                channel_id=client.capt_channel.id,
+                user_id=interaction.user.id,
+                form_type='otchet',
+                content=json.dumps({
+                    'rollback_link': self.rollback_link.value,
+                    'event_type': self.event_type.value,
+                    'date_time': self.date_time.value,
+                    'result': self.result.value
+                })
+            )
+            session.add(form)
+            session.commit()
+            session.close()
+
+            await interaction.response.send_message("✅ Ваш отчет отправлен!", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Канал для отчетов не настроен!", ephemeral=True)
+
 # Модальное окно для создания МП
 class MPModal(Modal, title="Создание МП"):
     time = discord.ui.TextInput(
@@ -704,6 +773,11 @@ async def captform(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=view)
     await interaction.response.send_message("✅ Сообщение с кнопкой создано!", ephemeral=True)
 
+# Команда для создания отчета
+@client.tree.command(name="otchet", description="Создать отчет")
+async def otchet(interaction: discord.Interaction):
+    await interaction.response.send_modal(OtchetModal())
+
 # Команда для создания МП
 @client.tree.command(name="mp", description="Собрать на капт")
 async def mp(interaction: discord.Interaction):
@@ -825,6 +899,29 @@ async def sync(interaction: discord.Interaction):
         await interaction.followup.send("✅ Команды успешно синхронизированы!", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ Ошибка при синхронизации: {str(e)}", ephemeral=True)
+
+# Команда для создания кнопки отчета
+@client.tree.command(name="otchetform", description="Создать кнопку для отчета")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+async def otchetform(interaction: discord.Interaction):
+    class OtchetButton(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=None)
+            
+        @discord.ui.button(label="Создать отчет", style=discord.ButtonStyle.green, custom_id="otchet_button")
+        async def otchet_button(self, button_interaction: discord.Interaction, button: discord.ui.Button):
+            await button_interaction.response.send_modal(OtchetModal())
+
+    embed = discord.Embed(
+        title="📝 Создание отчета",
+        description="Нажмите на кнопку ниже, чтобы создать отчет",
+        color=discord.Color.blue()
+    )
+    
+    view = OtchetButton()
+    await interaction.channel.send(embed=embed, view=view)
+    await interaction.response.send_message("✅ Сообщение с кнопкой создано!", ephemeral=True)
 
 @client.event
 async def on_ready():
