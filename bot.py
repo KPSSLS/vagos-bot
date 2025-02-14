@@ -25,6 +25,7 @@ class Client(discord.Client):
         self.capt_channel = None  # Канал для отправки форм Captain
         self.capt_role = None  # Роль для выдачи после принятия в Captain
         self.mp_channel = None  # Канал для отправки МП
+        self.otchet_channel = None  # Канал для отправки отчетов
 
 client = Client()
 
@@ -478,14 +479,14 @@ class OtchetModal(Modal, title="Форма отчета"):
 
         view = PersistentView()
 
-        if client.capt_channel:
-            message = await client.capt_channel.send(embed=embed, view=view)
+        if client.otchet_channel:
+            message = await client.otchet_channel.send(embed=embed, view=view)
             
             # Сохраняем информацию о форме в базе данных
             session = get_session()
             form = Form(
                 message_id=message.id,
-                channel_id=client.capt_channel.id,
+                channel_id=client.otchet_channel.id,
                 user_id=interaction.user.id,
                 form_type='otchet',
                 content=json.dumps({
@@ -501,7 +502,7 @@ class OtchetModal(Modal, title="Форма отчета"):
 
             await interaction.response.send_message("✅ Ваш отчет отправлен!", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ Канал для отчетов не настроен!", ephemeral=True)
+            await interaction.response.send_message("❌ Канал для отправки отчетов не установлен! Используйте команду /setotchetchanel", ephemeral=True)
 
 # Модальное окно для создания МП
 class MPModal(Modal, title="Создание МП"):
@@ -841,6 +842,17 @@ async def setmpchannel(interaction: discord.Interaction, channel: discord.TextCh
     
     client.mp_channel = channel
     await interaction.response.send_message(f"✅ Канал {channel.mention} установлен для МП", ephemeral=True)
+
+# Команда для установки канала отчетов
+@client.tree.command(name="setotchetchanel", description="Установить канал для отправки отчетов")
+@app_commands.describe(channel="Канал для отправки отчетов")
+async def setotchetchanel(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ У вас нет прав для использования этой команды!", ephemeral=True)
+        return
+    
+    client.otchet_channel = channel
+    await interaction.response.send_message(f"✅ Канал {channel.mention} установлен для отправки отчетов", ephemeral=True)
 
 # Команда для установки роли неактивности
 @client.tree.command(name="setinactiverole", description="Установить роль неактивности")
