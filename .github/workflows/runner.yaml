@@ -84,7 +84,7 @@ jobs:
           PROJECT_DIR: ${{ env.MOUNT_DIR }}/${{ env.REPO_NAME }}
         run: mkdir -p $PROJECT_DIR && cd $PROJECT_DIR
 
-      - name: Download new docker-compose.prod.yaml
+      - name: Creating a new docker-compose.yaml
         shell: bash
         run: |
           cd ${{ env.MOUNT_DIR }}/${{ env.REPO_NAME }}
@@ -95,7 +95,7 @@ jobs:
           sed -i 's/\$REGISTRY_USERNAME/${{ env.REGISTRY_USERNAME }}/g' docker-compose.yaml
           sed -i 's/\$APP_NAME/${{ env.REPO_NAME }}/g' docker-compose.yaml
 
-      - name: Create new production .env
+      - name: Creating a new production .env
         shell: bash
         run: |
           cd ${{ env.MOUNT_DIR }}/${{ env.REPO_NAME }}
