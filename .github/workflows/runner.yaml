@@ -100,7 +100,7 @@ jobs:
         run: |
           cd ${{ env.MOUNT_DIR }}/${{ env.REPO_NAME }}
 
-          cat << EOF > .env
+          cat << 'EOF' > .env
           DISCORD_TOKEN=${{ env.DISCORD_TOKEN }}
           EOF
 
